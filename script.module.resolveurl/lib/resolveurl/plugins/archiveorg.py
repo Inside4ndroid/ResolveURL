@@ -26,10 +26,10 @@ from resolveurl.resolver import ResolveUrl, ResolverError
 class ArchiveOrgResolver(ResolveUrl):
     name = 'Archive_Org'
     domains = ['archive.org']
-    pattern = r'(?://|\.)(archive\.org)/(?:embed|details|download)/([0-9a-zA-Z-_\.]+)'
+    pattern = r'(?://|\.)(archive\.org)/(?:embed|details|download)/([0-9a-zA-Z-_\.]+)(?:/.*)?'
 
     def get_media_url(self, host, media_id):
-        if 'archive.org/download/' in self.url:
+        if '/download/' in self.url:
             return self.url + helpers.append_headers({'User-Agent': common.RAND_UA})
 
         web_url = self.get_url(host, media_id)
