@@ -37,6 +37,12 @@ BACKENDS = [
     {'name': 'Movies5F', 'path': 'movies5f'},
 ]
 
+# Define logging levels if they don't exist in common
+if not hasattr(common, 'LOGERROR'):
+    common.LOGERROR = 4
+if not hasattr(common, 'LOGWARNING'):
+    common.LOGWARNING = 2
+
 
 class VidNestResolver(ResolveUrl):
     name = "vidnest"
@@ -51,7 +57,7 @@ class VidNestResolver(ResolveUrl):
         
         # Common headers
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Origin': 'https://vidnest.fun',
             'Referer': 'https://vidnest.fun/',
             'Accept': 'application/json, */*',
@@ -60,7 +66,8 @@ class VidNestResolver(ResolveUrl):
         try:
             # First try to get the webpage to find available servers
             html = self.net.http_GET(web_url, headers=headers).content
-            html = html.decode('utf-8', errors='ignore')
+            if isinstance(html, bytes):
+                html = html.decode('utf-8', errors='ignore')
             
             # Check if it's a TV show or movie
             is_tv = '/tv/' in web_url
@@ -93,6 +100,9 @@ class VidNestResolver(ResolveUrl):
         """
         Extract TMDB ID from the page or use the provided ID
         """
+        if not html:
+            return media_id if media_id.isdigit() else None
+            
         # Try to find TMDB ID in the page
         tmdb_match = re.search(r'data-tmdbid=["\']?(\d+)["\']?', html, re.I)
         if tmdb_match:
@@ -112,7 +122,13 @@ class VidNestResolver(ResolveUrl):
         if json_match:
             return json_match.group(1)
             
-        raise ResolverError('Could not extract TMDB ID')
+        # Try to find it in the URL pattern
+        url_match = re.search(r'/movie/(\d+)', html, re.I)
+        if url_match:
+            return url_match.group(1)
+            
+        # Return the media_id as last resort
+        return media_id if media_id.isdigit() else None
 
     def _try_backend(self, tmdb_id, backend, is_tv=False):
         """
@@ -134,7 +150,11 @@ class VidNestResolver(ResolveUrl):
 
         try:
             response = self.net.http_GET(api_url, headers=headers)
-            response_data = json.loads(response.content)
+            response_content = response.content
+            if isinstance(response_content, bytes):
+                response_content = response_content.decode('utf-8', errors='ignore')
+            
+            response_data = json.loads(response_content)
             
             # Check if data is encrypted
             if response_data.get('encrypted', False):
@@ -178,28 +198,32 @@ class VidNestResolver(ResolveUrl):
                         vals.append(64)
                 
                 # Decode 4 chars into 3 bytes
-                result.append((vals[0] << 2) | (vals[1] >> 4))
-                if vals[2] != 64:
-                    result.append(((vals[1] & 15) << 4) | (vals[2] >> 2))
-                if vals[3] != 64:
-                    result.append(((vals[2] & 3) << 6) | vals[3])
+                if len(vals) >= 4:
+                    result.append((vals[0] << 2) | (vals[1] >> 4))
+                    if vals[2] != 64:
+                        result.append(((vals[1] & 15) << 4) | (vals[2] >> 2))
+                    if vals[3] != 64:
+                        result.append(((vals[2] & 3) << 6) | vals[3])
                 
                 i += 4
             
             # Try to parse as JSON
             try:
-                return json.loads(result.decode('utf-8'))
+                decoded = result.decode('utf-8')
+                return json.loads(decoded)
             except:
                 # If not valid JSON, try to parse as string
                 result_str = result.decode('utf-8', errors='ignore')
-                try:
-                    return json.loads(result_str)
-                except:
-                    # Try to extract JSON from the string
-                    json_match = re.search(r'\{.*\}', result_str, re.DOTALL)
-                    if json_match:
+                
+                # Try to find JSON in the string
+                json_match = re.search(r'\{.*\}', result_str, re.DOTALL)
+                if json_match:
+                    try:
                         return json.loads(json_match.group(0))
-                    return result_str
+                    except:
+                        pass
+                
+                return result_str
                 
         except Exception as e:
             common.logger.log('VidNest decryption error: %s' % str(e), common.LOGWARNING)
@@ -228,7 +252,6 @@ class VidNestResolver(ResolveUrl):
 
         # Try sources format (moviesapi, hollymoviehd, vidlink, klikxxi)
         if 'sources' in data and data['sources']:
-            # Sort by quality if available
             sources = data['sources']
             if isinstance(sources, list) and sources:
                 # Prefer higher quality
@@ -237,7 +260,8 @@ class VidNestResolver(ResolveUrl):
                         url = source['url']
                         if url.startswith('//'):
                             url = 'https:' + url
-                        return url
+                        if self._is_valid_stream_url(url):
+                            return url
 
         # Try streams format (allmovies)
         if 'streams' in data and data['streams']:
@@ -248,7 +272,8 @@ class VidNestResolver(ResolveUrl):
                         url = stream['url']
                         if url.startswith('//'):
                             url = 'https:' + url
-                        return url
+                        if self._is_valid_stream_url(url):
+                            return url
 
         # Try downloads format (movies4f)
         if 'data' in data and isinstance(data['data'], dict):
@@ -268,31 +293,52 @@ class VidNestResolver(ResolveUrl):
                         url = best['url']
                         if url.startswith('//'):
                             url = 'https:' + url
-                        return url
+                        if self._is_valid_stream_url(url):
+                            return url
 
         # Try direct URL
         if 'url' in data and data['url']:
             url = data['url']
             if url.startswith('//'):
                 url = 'https:' + url
-            return url
+            if self._is_valid_stream_url(url):
+                return url
 
         # Try to find any URL in the data
         if isinstance(data, dict):
             for key, value in data.items():
                 if isinstance(value, str) and (value.startswith('http') or value.startswith('//')):
-                    if '.m3u8' in value or '.mp4' in value or '.mkv' in value:
+                    if any(ext in value.lower() for ext in ['.m3u8', '.mp4', '.mkv', '.ts']):
                         if value.startswith('//'):
                             value = 'https:' + value
                         return value
 
         return None
 
+    def _is_valid_stream_url(self, url):
+        """
+        Check if a URL looks like a valid stream URL
+        """
+        if not url:
+            return False
+        
+        # Check if it's a valid URL
+        valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.webm']
+        if any(ext in url.lower() for ext in valid_extensions):
+            return True
+        
+        # Check if it's an iframe URL that might contain a stream
+        if 'embed' in url.lower() or 'player' in url.lower():
+            return True
+            
+        return True  # Return True for other URLs as they might still work
+
     def _verify_stream(self, url):
         """
         Verify that the stream URL is accessible
         """
         try:
+            # Try a HEAD request to verify the URL exists
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://vidnest.fun/',
