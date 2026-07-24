@@ -71,6 +71,20 @@ class VKResolver(ResolveUrl):
                 source = params.get('hls') or params.get('hls_ondemand')
             if source:
                 return source + helpers.append_headers(headers)
+        else:
+            jd = re.search(r'(\{[^{}]*"(?:mp4_\d+|hls)"[^{}]*\})', html)
+            if jd:
+                try:
+                    params = json.loads(jd.group(1).replace('\\/', '/'))
+                    mp4_sources = sorted(
+                        [(int(k[4:]), v) for k, v in params.items() if k.startswith('mp4_')],
+                        reverse=True
+                    )
+                    source = params.get('hls') or params.get('hls_ondemand') or (mp4_sources[0][1] if mp4_sources else None)
+                    if source:
+                        return source + helpers.append_headers(headers)
+                except (ValueError, KeyError, TypeError, IndexError):
+                    pass
 
         raise ResolverError('No video found')
 
@@ -103,7 +117,9 @@ class VKResolver(ResolveUrl):
         if payload:
             for item in payload:
                 if isinstance(item, dict):
-                    js_data = item.get('player').get('params')[0]
+                    player = item.get('player')
+                    if player and player.get('params'):
+                        js_data = player.get('params')[0]
             for item in list(js_data.keys()):
                 if item.startswith('url'):
                     sources.append((item[3:], js_data.get(item)))
@@ -117,6 +133,10 @@ class VKResolver(ResolveUrl):
         if 'doc/' in media_id or media_id.startswith('doc'):
             url = 'https://{0}/{1}'.format(host, media_id)
         else:
-            media_id = media_id.replace('video', '')
-            url = 'https://{0}/video_ext.php?{1}'.format(host, media_id)
+            clean = media_id.replace('video', '')
+            if '_' in clean:
+                oid, vid = clean.split('_', 1)
+                url = 'https://{0}/video_ext.php?oid={1}&id={2}'.format(host, oid, vid)
+            else:
+                url = 'https://{0}/video_ext.php?{1}'.format(host, clean)
         return url
