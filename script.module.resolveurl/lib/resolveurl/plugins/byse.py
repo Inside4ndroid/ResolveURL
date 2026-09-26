@@ -35,12 +35,13 @@ class ByseResolver(ResolveUrl):
         'bf0skv.org', 'z1ekv717.fun', 'l1afav.net', '222i8x.lol', '8mhlloqo.fun', 'f51rm.com',
         'xcoic.com', 'filemoon.nl', 'boosteradx.online', 'streamlyplayer.online', 'bysewihe.com',
         'byselapuix.com', 'embedplaybyse.top', 'sb1254w9megshle.org', 'streamlyplayero.online',
-        'moflix-stream.link', 'bysezoxexe.com'
+    'moflix-stream.link', 'bysezoxexe.com', 'q8y5z.com', 'f75s.com'
     ]
     pattern = (
         r'(?://|\.)((?:filemoon|cinegrab|moonmov|kerapoxy|furher|1azayf9w|81u6xl9d|f16px|sb1254w9megshle|'
-        r'smdfs40r|bf0skv|z1ekv717|l1afav|222i8x|8mhlloqo|96ar|xcoic|f51rm|c1z39|boosteradx|streamlyplayero?|moflix-stream|'
-        r'(?:embedplay)?byse(?:sayeveum|tayico|zejataos|koze|sukior|jikuar|fujedu|dikamoum|buho|wihe|lapuix|vepoin|zoxexe)?)'
+    r'smdfs40r|bf0skv|z1ekv717|l1afav|222i8x|8mhlloqo|96ar|xcoic|f51rm|c1z39|boosteradx|streamlyplayero?|'
+    r'moflix-stream|q8y5z|f75s|'
+    r'(?:embedplay)?byse(?:sayeveum|tayico|zejataos|koze|sukior|jikuar|fujedu|dikamoum|buho|wihe|lapuix|vepoin|zoxexe)?)'
         r'\.(?:sx|top?|s?k?in|link|nl|wf|com|eu|art|pro|cc|xyz|org|fun|net|lol|online))'
         r'/(?:(?:e|d|download)/)?([0-9a-zA-Z]+)'
     )
@@ -54,20 +55,12 @@ class ByseResolver(ResolveUrl):
             'Referer': ref,
             'Origin': ref[:-1]
         }
-        embed = ''
-        details_url = '{0}api/videos/{1}/details'.format(ref, media_id)
+        embed = 'embed/'
+        details_url = '{0}api/videos/{1}/{2}details'.format(ref, media_id, embed)
         try:
             details = self.net.http_GET(details_url, headers=headers).json
-        except urllib_error.HTTPError as e:
-            if e.code == 404:
-                embed = 'embed/'
-                details_url = '{0}api/videos/{1}/{2}details'.format(ref, media_id, embed)
-                try:
-                    details = self.net.http_GET(details_url, headers=headers).json
-                except urllib_error.HTTPError:
-                    raise ResolverError('Video Link Not Found')
-            else:
-                raise ResolverError('Video Link Not Found')
+        except urllib_error.HTTPError:
+            raise ResolverError('Video Link Not Found')
         embed_url = details.get('embed_frame_url')
         if embed_url:
             ref = urllib_parse.urljoin(embed_url, '/')
@@ -140,9 +133,9 @@ class ByseResolver(ResolveUrl):
         raise ResolverError('Video Link Not Found')
 
     def get_url(self, host, media_id):
-        redirect_domains = ['boosteradx.online', 'byse.sx', 'streamlyplayer.online']
+        redirect_domains = ['boosteradx.online', 'byse.sx']
         if host in redirect_domains:
-            host = 'streamlyplayero.online'
+            host = 'q8y5z.com'
         return self._default_get_url(host, media_id, 'https://{host}/e/{media_id}')
 
     @staticmethod
@@ -153,12 +146,14 @@ class ByseResolver(ResolveUrl):
     def fh(e):
         return helpers.b64urlencode(sha256(str(e).encode('ascii')).digest(), strip=True)
 
-    def xn(self, e, v):
-        if v:
-            v = int(v)
-            e = [e[v - 1], e[len(e) - v]]
-        t = list(map(self.ft, e))
-        return b''.join(t)
+    def xn(self, key_parts, version):
+        v = int(version) if version else 0
+        if v and len(key_parts) >= v:
+            selected = [key_parts[v - 1], key_parts[len(key_parts) - v]]
+            parts = list(map(self.ft, selected))
+        else:
+            parts = list(map(self.ft, key_parts))
+        return b''.join(parts)
 
     @staticmethod
     def fp(x, y, z):
@@ -186,6 +181,7 @@ class ByseResolver(ResolveUrl):
 
     def wn(self, ch):
         from resolveurl.lib.ecdsa import SigningKey, NIST256p
+        from base64 import urlsafe_b64encode as b64e
         sk = SigningKey.generate(curve=NIST256p, hashfunc=sha256)
         vk = sk.verifying_key.to_string()
         signature = sk.sign(ch.get('nonce').encode(), hashfunc=sha256)
@@ -195,10 +191,16 @@ class ByseResolver(ResolveUrl):
             'y': helpers.b64urlencode(vk[32:], strip=True)
         }
         sig = helpers.b64urlencode(signature, strip=True)
+        viewer_id = ch.get('viewer_hint', '')
+        device_id = ''
+        if viewer_id:
+            from os import urandom
+            raw = (viewer_id + ':' + urandom(8).hex()).encode()
+            device_id = b64e(raw).decode().rstrip('=')[:22]
         r = random()
         return {
-            'viewer_id': '',
-            'device_id': '',
+            'viewer_id': viewer_id,
+            'device_id': device_id,
             'challenge_id': ch['challenge_id'],
             'nonce': ch['nonce'],
             'signature': sig,
@@ -242,7 +244,10 @@ class ByseResolver(ResolveUrl):
                     'appVersion': self.UA.lstrip('Mozilla/')
                 }
             },
-            'storage': {},
+            'storage': {
+                'cookie': viewer_id,
+                'indexed_db': '{}:{}'.format(viewer_id, device_id)
+            } if viewer_id else {},
             'attributes': {'entropy': 'high'}
         }
 
@@ -308,18 +313,34 @@ class ByseResolver(ResolveUrl):
             return e + (32 - n.bit_length())
         return e
 
-    def er(self, t, e, r=20.0):
+    def er(self, t, e, r=60.0):
         import time
         if e <= 0:
             return '0'
         start = time.time()
         s = 0
-        t += ':'
+        prefix = (t + ':').encode('ascii')
         while True:
-            for _ in range(1024):
-                d = self.gr((t + str(s)).encode('ascii'))
-                if self.wr(d) >= e:
+            for _ in range(4096):
+                data = prefix + str(s).encode('ascii')
+                if self.wr(self.gr(data)) >= e:
+                    return str(s)
+                if self.wr(self.sha256_to_ints(data)) >= e:
                     return str(s)
                 s += 1
             if time.time() - start > r:
                 return None
+
+    @staticmethod
+    def sha256_to_ints(data):
+        h = sha256(data).digest()
+        return [
+            (h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3],
+            (h[4] << 24) | (h[5] << 16) | (h[6] << 8) | h[7],
+            (h[8] << 24) | (h[9] << 16) | (h[10] << 8) | h[11],
+            (h[12] << 24) | (h[13] << 16) | (h[14] << 8) | h[15],
+            (h[16] << 24) | (h[17] << 16) | (h[18] << 8) | h[19],
+            (h[20] << 24) | (h[21] << 16) | (h[22] << 8) | h[23],
+            (h[24] << 24) | (h[25] << 16) | (h[26] << 8) | h[27],
+            (h[28] << 24) | (h[29] << 16) | (h[30] << 8) | h[31],
+        ]
