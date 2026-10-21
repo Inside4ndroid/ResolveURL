@@ -1,23 +1,18 @@
-Version 5.1.209 (Sep 20, 2026)
+Version 5.1.211 (Oct 11, 2026)
 - Code Base Changes:
-    - 2Captcha support, required for dropload
+    - add close method and context manager support to HttpResponse
+    - add test suite
 
 - Resolvers Added:
-    - filemoon
-    - vidzy
+    - dtube
 
 - Resolvers Fixed/Updated:
-    - dropload
-    - firestream
-    - flyfile
-    - indavideo
-    - mixdrop
-    - streamix
-    - streamtape
-    - streamwish
-    - videa
-    - vidsonic
-    - vk
+    - anonmp4
+    - debridlink
+    - filemoon
+    - gupload
+    - lulustream
+    - streamcash
     - voesx
 
 - Resolvers Removed
